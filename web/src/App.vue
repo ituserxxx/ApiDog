@@ -1,21 +1,16 @@
 <template>
   <div id="app">
     <header>
-      <h1>ApiGog</h1>
+      <h1>ApiDog</h1>
       <p>API测试工具</p>
     </header>
     <main>
-      <div class="status card">
-        <h2>系统状态</h2>
-        <p v-if="status">{{ status.message }}</p>
-        <p v-else>连接中...</p>
-      </div>
 
       <div class="panel card">
         <h2>API 测试</h2>
         <div class="form-grid">
           <div class="field">
-            <label>URL 地址（可本地/公网）</label>
+            <label>URL 地址</label>
             <input v-model="baseUrl" type="text" placeholder="例如：http://localhost:5000" />
           </div>
 
@@ -33,18 +28,48 @@
           </div>
 
           <div class="field span-2">
-            <label>Header（JSON）</label>
-            <textarea v-model="headersJson" rows="4" placeholder='例如：{"Authorization":"Bearer xxx"}'></textarea>
+            <div class="field-header">
+              <label>Header（JSON）</label>
+              <button class="btn-format" @click="formatJson('headers')">格式化</button>
+            </div>
+            <textarea
+              v-model="headersJson"
+              rows="4"
+              placeholder='例如：{"Authorization":"Bearer xxx"}'
+              :class="{ 'input-error': headersError }"
+              @blur="validateJson('headers')"
+            ></textarea>
+            <div class="json-error" v-if="headersError">{{ headersError }}</div>
           </div>
 
           <div class="field" v-if="method === 'GET'">
-            <label>GET 参数（JSON）</label>
-            <textarea v-model="getParamsJson" rows="4" placeholder='例如：{"q":"test"}'></textarea>
+            <div class="field-header">
+              <label>GET 参数（JSON）</label>
+              <button class="btn-format" @click="formatJson('getParams')">格式化</button>
+            </div>
+            <textarea
+              v-model="getParamsJson"
+              rows="4"
+              placeholder='例如：{"q":"test"}'
+              :class="{ 'input-error': getParamsError }"
+              @blur="validateJson('getParams')"
+            ></textarea>
+            <div class="json-error" v-if="getParamsError">{{ getParamsError }}</div>
           </div>
 
           <div class="field" v-if="method === 'POST'">
-            <label>POST 参数（JSON）</label>
-            <textarea v-model="postParamsJson" rows="4" placeholder='例如：{"name":"tom"}'></textarea>
+            <div class="field-header">
+              <label>POST 参数（JSON）</label>
+              <button class="btn-format" @click="formatJson('postParams')">格式化</button>
+            </div>
+            <textarea
+              v-model="postParamsJson"
+              rows="4"
+              placeholder='例如：{"name":"tom"}'
+              :class="{ 'input-error': postParamsError }"
+              @blur="validateJson('postParams')"
+            ></textarea>
+            <div class="json-error" v-if="postParamsError">{{ postParamsError }}</div>
           </div>
         </div>
 
@@ -63,16 +88,27 @@
           <pre class="response-body" v-if="prettyResponse">{{ prettyResponse }}</pre>
           <div class="muted" v-else>暂无响应</div>
         </div>
+
+        <!-- 完整请求/响应日志 -->
+        <div class="request-log" v-if="requestLog">
+          <div class="log-header">
+            <h3>完整请求 & 响应</h3>
+            <button class="btn-copy" @click="copyLog">
+              {{ copyBtnText }}
+            </button>
+          </div>
+          <pre class="log-body">{{ requestLog }}</pre>
+        </div>
       </div>
     </main>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref } from 'vue'
 import axios from 'axios'
 
-const status = ref(null)
+
 const baseUrl = ref('http://localhost:5000')
 const apiPath = ref('/api/health')
 const method = ref('GET')
@@ -81,12 +117,54 @@ const headersJson = ref('{}')
 const getParamsJson = ref('{}')
 const postParamsJson = ref('{}')
 
+const headersError = ref('')
+const getParamsError = ref('')
+const postParamsError = ref('')
+
+const jsonFieldMap = {
+  headers: { value: headersJson, error: headersError, label: 'Header' },
+  getParams: { value: getParamsJson, error: getParamsError, label: 'GET 参数' },
+  postParams: { value: postParamsJson, error: postParamsError, label: 'POST 参数' },
+}
+
 const loading = ref(false)
 const errorText = ref('')
+
+function validateJson(field) {
+  const { value, error } = jsonFieldMap[field]
+  const raw = String(value.value ?? '').trim()
+  if (!raw) {
+    error.value = ''
+    return true
+  }
+  try {
+    JSON.parse(raw)
+    error.value = ''
+    return true
+  } catch (e) {
+    error.value = `${jsonFieldMap[field].label} JSON 格式有误：${e.message}`
+    return false
+  }
+}
+
+function formatJson(field) {
+  const { value, error } = jsonFieldMap[field]
+  const raw = String(value.value ?? '').trim()
+  if (!raw) return
+  try {
+    const parsed = JSON.parse(raw)
+    value.value = JSON.stringify(parsed, null, 2)
+    error.value = ''
+  } catch (e) {
+    error.value = `${jsonFieldMap[field].label} JSON 格式有误，无法格式化：${e.message}`
+  }
+}
 
 const responseStatusText = ref('')
 const elapsedMs = ref(null)
 const prettyResponse = ref('')
+const requestLog = ref('')
+const copyBtnText = ref('一键复制')
 
 function joinUrl(base, path) {
   if (!base) return path || ''
@@ -135,6 +213,7 @@ async function sendRequest() {
   responseStatusText.value = ''
   elapsedMs.value = null
   prettyResponse.value = ''
+  requestLog.value = ''
 
   const fullUrl = joinUrl(baseUrl.value, apiPath.value)
 
@@ -182,6 +261,7 @@ async function sendRequest() {
     responseStatusText.value = `${resp.status} ${resp.statusText || ''}`.trim()
     elapsedMs.value = end - start
     prettyResponse.value = prettyPrint(resp.data)
+    requestLog.value = buildLog(method.value, fullUrl, headers, method.value === 'GET' ? getParams : undefined, method.value === 'POST' ? postParams : undefined, resp.status, resp.data, end - start)
   } catch (e) {
     const end = Date.now()
     elapsedMs.value = end - start
@@ -194,20 +274,66 @@ async function sendRequest() {
 
     prettyResponse.value = prettyPrint(resp?.data ?? e?.message)
     errorText.value = '请求失败，请检查 URL/路由/参数或是否跨域允许'
+    requestLog.value = buildLog(method.value, fullUrl, headers, method.value === 'GET' ? getParams : undefined, method.value === 'POST' ? postParams : undefined, statusCode, resp?.data ?? e?.message, end - start)
   } finally {
     loading.value = false
   }
 }
 
-onMounted(async () => {
-  try {
-    const response = await axios.get('/api')
-    status.value = response.data
-  } catch (error) {
-    console.error('无法连接到后端服务:', error)
-    status.value = { message: '无法连接到后端服务' }
+function buildLog(method, url, headers, params, body, statusCode, responseData, elapsed) {
+  const lines = []
+  const time = new Date().toLocaleString('zh-CN')
+  lines.push(`========== 请求时间: ${time} ==========`)
+  lines.push('')
+  lines.push('--- 请求 ---')
+  lines.push(`${method} ${url}`)
+  lines.push('')
+  lines.push(`Headers:`)
+  lines.push(JSON.stringify(headers, null, 2))
+  if (params && Object.keys(params).length > 0) {
+    lines.push('')
+    lines.push(`Query Params:`)
+    lines.push(JSON.stringify(params, null, 2))
   }
-})
+  if (body !== undefined && method !== 'GET') {
+    lines.push('')
+    lines.push(`Body:`)
+    lines.push(JSON.stringify(body, null, 2))
+  }
+  lines.push('')
+  lines.push('--- 响应 ---')
+  lines.push(`Status: ${statusCode}`)
+  lines.push(`耗时: ${elapsed} ms`)
+  lines.push('')
+  lines.push(`Response:`)
+  lines.push(prettyPrint(responseData))
+  lines.push('')
+  lines.push('==========================================')
+  return lines.join('\n')
+}
+
+async function copyLog() {
+  if (!requestLog.value) return
+  try {
+    await navigator.clipboard.writeText(requestLog.value)
+    copyBtnText.value = '已复制!'
+    setTimeout(() => { copyBtnText.value = '一键复制' }, 2000)
+  } catch {
+    const textarea = document.createElement('textarea')
+    textarea.value = requestLog.value
+    document.body.appendChild(textarea)
+    textarea.select()
+    document.execCommand('copy')
+    document.body.removeChild(textarea)
+    copyBtnText.value = '已复制!'
+    setTimeout(() => { copyBtnText.value = '一键复制' }, 2000)
+  }
+}
+
+
+
+
+
 </script>
 
 <style>
@@ -248,6 +374,8 @@ header p {
   opacity: 0.9;
 }
 
+
+
 .card {
   background: white;
   padding: 30px;
@@ -284,6 +412,34 @@ header p {
   margin-bottom: 8px;
 }
 
+.field-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.field-header label {
+  margin-bottom: 0;
+}
+
+.btn-format {
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  padding: 4px 12px;
+  background: #fff;
+  color: #667eea;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn-format:hover {
+  background: #667eea;
+  color: #fff;
+  border-color: #667eea;
+}
+
 .field input,
 .field select,
 .field textarea {
@@ -294,10 +450,32 @@ header p {
   font-size: 14px;
   outline: none;
   background: #fafafa;
+  transition: border-color 0.2s;
+}
+
+.field input:focus,
+.field select:focus,
+.field textarea:focus {
+  border-color: #667eea;
 }
 
 .field textarea {
   resize: vertical;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Courier New', monospace;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.field textarea.input-error {
+  border-color: #d93025;
+  background: #fff5f5;
+}
+
+.json-error {
+  color: #d93025;
+  font-size: 12px;
+  margin-top: 6px;
+  padding: 4px 0;
 }
 
 .span-2 {
@@ -359,6 +537,57 @@ header p {
   border-radius: 8px;
   padding: 14px;
   max-height: 420px;
+  overflow: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
+    'Courier New', monospace;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.request-log {
+  margin-top: 20px;
+  border: 1px solid #eee;
+  border-radius: 10px;
+  padding: 16px;
+  background: #fcfcfc;
+}
+
+.log-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.log-header h3 {
+  color: #333;
+  font-size: 16px;
+}
+
+.btn-copy {
+  border: 1px solid #667eea;
+  border-radius: 8px;
+  padding: 6px 16px;
+  background: #fff;
+  color: #667eea;
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn-copy:hover {
+  background: #667eea;
+  color: #fff;
+}
+
+.log-body {
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: #0b1020;
+  color: #e5e7eb;
+  border-radius: 8px;
+  padding: 14px;
+  max-height: 500px;
   overflow: auto;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
     'Courier New', monospace;

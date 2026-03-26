@@ -10,7 +10,7 @@ CORS(app)
 
 def running_payload():
     return {
-        'message': 'ApiGog Flask API Server',
+        'message': 'ApiDog Flask API Server',
         'status': 'running'
     }
 
@@ -24,7 +24,7 @@ def api_entry():
 def health_check():
     return jsonify({
         'status': 'healthy',
-        'service': 'ApiGog API'
+        'service': 'ApiDog API'
     }), 200
 
 if __name__ == '__main__':
